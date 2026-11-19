@@ -1,0 +1,62 @@
+name: e26-pebble-cost
+
+# E26c: real pebble, three vfs/default_windows.go variants, dir-sync cost.
+# base    = cockroachdb/pebble a995e890 (upstream master)
+# dironly = takomitkm/pebble 1e285158 (PR #6258 commit 1, parent-dir flush)
+# dirroot = takomitkm/pebble 52534185 (PR #6258 head, + volume-root flush)
+# The bench program is copied into each checkout and `go run` there, so it
+# compiles against that checkout's own vfs code.
+
+on:
+  push:
+    branches: [bench-e26]
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: rig
+        uses: actions/checkout@v4
+        with:
+          path: rig
+
+      - name: base (upstream master)
+        uses: actions/checkout@v4
+        with:
+          repository: cockroachdb/pebble
+          ref: a995e890c06ef86c583927906e16e7f313083a3f
+          path: base
+
+      - name: dironly (PR #6258 commit 1)
+        uses: actions/checkout@v4
+        with:
+          repository: takomitkm/pebble
+          ref: 1e285158b50634603e9447533ab2b91f1e8f7a72
+          path: dironly
+
+      - name: dirroot (PR #6258 head)
+        uses: actions/checkout@v4
+        with:
+          repository: takomitkm/pebble
+          ref: 52534185d0de0197dd3251fd13e42a2fe868ef43
+          path: dirroot
+
+      - name: bench - 3 rounds x 3 variants (300 explicit flushes each)
+        shell: pwsh
+        run: |
+          go version
+          foreach ($v in 'base','dironly','dirroot') {
+            New-Item -ItemType Directory -Force -Path "$v\pebblebench" | Out-Null
+            Copy-Item rig\pebblebench\main.go "$v\pebblebench\main.go" -Force
+          }
+          foreach ($r in 1..3) {
+            foreach ($v in 'base','dironly','dirroot') {
+              Push-Location $v
+              go run ./pebblebench -db "D:\e26pebble-$v-$r" -flushes 300 -kpf 200
+              $c = $LASTEXITCODE
+              Pop-Location
+              if ($c -ne 0) { exit $c }
+            }
+          }
